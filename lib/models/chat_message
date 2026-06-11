@@ -1,0 +1,39 @@
+// lib/models/chat_message.dart
+// Data model for a single chat message
+
+enum MessageRole { user, assistant, system }
+
+class ChatMessage {
+  final String id;
+  final String content;
+  final MessageRole role;
+  final DateTime timestamp;
+  final bool isTyping; // true while the AI is still "printing"
+
+  const ChatMessage({
+    required this.id,
+    required this.content,
+    required this.role,
+    required this.timestamp,
+    this.isTyping = false,
+  });
+
+  ChatMessage copyWith({
+    String? content,
+    bool? isTyping,
+  }) {
+    return ChatMessage(
+      id:        id,
+      content:   content   ?? this.content,
+      role:      role,
+      timestamp: timestamp,
+      isTyping:  isTyping  ?? this.isTyping,
+    );
+  }
+
+  /// Convert to OpenAI/Gemini API message format
+  Map<String, String> toApiMap() => {
+    'role':    role == MessageRole.user ? 'user' : 'assistant',
+    'content': content,
+  };
+}
