@@ -5,7 +5,10 @@ workflows:
       flutter: stable
     scripts:
       - name: Create android folder
-        script: flutter create . --platforms android
+        script: |
+          flutter create . --platforms android
+          echo "Android folder created"
+          ls -la android/
       - name: Get dependencies
         script: flutter pub get
       - name: Build APK
