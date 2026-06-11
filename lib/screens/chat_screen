@@ -1,0 +1,607 @@
+// lib/screens/chat_screen.dart
+// Main terminal chat UI — handles messages, STT, TTS, and API calls.
+
+import 'dart:math';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import '../models/chat_message.dart';
+import '../services/ai_service.dart';
+import '../services/speech_service.dart';
+import '../services/tts_service.dart';
+import '../theme/app_theme.dart';
+import '../widgets/chat_bubble.dart';
+import '../widgets/scanline_overlay.dart';
+
+class ChatScreen extends StatefulWidget {
+  final AIService aiService;
+  const ChatScreen({super.key, required this.aiService});
+
+  @override
+  State<ChatScreen> createState() => _ChatScreenState();
+}
+
+class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
+  // ── Services ──────────────────────────────────────────────────────────────
+  final SpeechService _speech = SpeechService();
+  final TtsService    _tts    = TtsService();
+
+  // ── State ─────────────────────────────────────────────────────────────────
+  final List<ChatMessage> _messages  = [];
+  final TextEditingController _textCtrl = TextEditingController();
+  final ScrollController _scrollCtrl   = ScrollController();
+
+  bool _isListening = false;
+  bool _isProcessing = false;
+  bool _isSpeaking = false;
+  bool _ttsEnabled = true;
+  String _sttPartial = '';
+  String? _animatingId; // ID of the message currently being typewritten
+
+  // Boot animation
+  late AnimationController _bootCtrl;
+  bool _bootDone = false;
+
+  // Mic pulse animation
+  late AnimationController _micPulseCtrl;
+
+  // Header flicker animation
+  late AnimationController _flickerCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _bootCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1800),
+    )..forward().whenComplete(() {
+        setState(() => _bootDone = true);
+        _addBootMessage();
+      });
+
+    _micPulseCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat(reverse: true);
+
+    _flickerCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 120),
+    )..repeat(reverse: true);
+
+    _tts.initialize();
+    _speech.initialize();
+  }
+
+  @override
+  void dispose() {
+    _bootCtrl.dispose();
+    _micPulseCtrl.dispose();
+    _flickerCtrl.dispose();
+    _textCtrl.dispose();
+    _scrollCtrl.dispose();
+    _speech.cancel();
+    _tts.stop();
+    super.dispose();
+  }
+
+  // ── Boot greeting ─────────────────────────────────────────────────────────
+  void _addBootMessage() {
+    final greeting = ChatMessage(
+      id:        _uuid(),
+      content:   'CIPHER v2.4 // ONLINE\n\nකවියා මචං! 👾 සිස්ටම් රෙඩී. ඔයාගේ ටර්මිනල් ඔන්ලයින් ⚡\nකොහෙන් පටන් ගන්නද?',
+      role:      MessageRole.assistant,
+      timestamp: DateTime.now(),
+    );
+    setState(() {
+      _messages.add(greeting);
+      _animatingId = greeting.id;
+    });
+    _scrollToBottom();
+  }
+
+  // ── Send text message ─────────────────────────────────────────────────────
+  Future<void> _sendMessage(String text) async {
+    if (text.trim().isEmpty || _isProcessing) return;
+    HapticFeedback.lightImpact();
+
+    final userMsg = ChatMessage(
+      id:        _uuid(),
+      content:   text.trim(),
+      role:      MessageRole.user,
+      timestamp: DateTime.now(),
+    );
+
+    final loadingMsg = ChatMessage(
+      id:        _uuid(),
+      content:   '',
+      role:      MessageRole.assistant,
+      timestamp: DateTime.now(),
+      isTyping:  true,
+    );
+
+    setState(() {
+      _messages.add(userMsg);
+      _messages.add(loadingMsg);
+      _isProcessing = true;
+      _sttPartial = '';
+    });
+    _textCtrl.clear();
+    _scrollToBottom();
+
+    // Call AI
+    final reply = await widget.aiService.sendMessage(
+      _messages.where((m) => !m.isTyping).toList(),
+    );
+
+    final replyMsg = ChatMessage(
+      id:        loadingMsg.id,
+      content:   reply,
+      role:      MessageRole.assistant,
+      timestamp: DateTime.now(),
+    );
+
+    setState(() {
+      final idx = _messages.indexWhere((m) => m.id == loadingMsg.id);
+      if (idx != -1) _messages[idx] = replyMsg;
+      _isProcessing = false;
+      _animatingId  = replyMsg.id;
+    });
+    _scrollToBottom();
+
+    // Speak the response
+    if (_ttsEnabled) {
+      setState(() => _isSpeaking = true);
+      await _tts.speak(reply);
+      setState(() => _isSpeaking = false);
+    }
+  }
+
+  // ── STT controls ──────────────────────────────────────────────────────────
+  Future<void> _toggleListening() async {
+    HapticFeedback.mediumImpact();
+    if (_isListening) {
+      await _speech.stopListening();
+      setState(() => _isListening = false);
+      if (_sttPartial.isNotEmpty) _sendMessage(_sttPartial);
+    } else {
+      final ok = await _speech.initialize();
+      if (!ok) {
+        _showSnack('🎙️ Mic permission denied');
+        return;
+      }
+      setState(() {
+        _isListening = true;
+        _sttPartial  = '';
+      });
+      await _speech.startListening(
+        localeId: 'si-LK',
+        onResult: (text, isFinal) {
+          setState(() => _sttPartial = text);
+          if (isFinal && text.isNotEmpty) {
+            _speech.stopListening();
+            setState(() => _isListening = false);
+            _sendMessage(text);
+          }
+        },
+        onDone: () => setState(() => _isListening = false),
+      );
+    }
+  }
+
+  // ── TTS toggle ────────────────────────────────────────────────────────────
+  void _toggleTts() {
+    setState(() => _ttsEnabled = !_ttsEnabled);
+    if (!_ttsEnabled) _tts.stop();
+  }
+
+  // ── Scroll helpers ────────────────────────────────────────────────────────
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollCtrl.hasClients) {
+        _scrollCtrl.animateTo(
+          _scrollCtrl.position.maxScrollExtent + 200,
+          duration: const Duration(milliseconds: 300),
+          curve:    Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  void _showSnack(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg, style: AppTheme.terminalSmall),
+        backgroundColor: AppTheme.bgCard,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  String _uuid() =>
+      DateTime.now().microsecondsSinceEpoch.toString() +
+      Random().nextInt(9999).toString();
+
+  // ── BUILD ─────────────────────────────────────────────────────────────────
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppTheme.bgPrimary,
+      body: ScanlineOverlay(
+        child: SafeArea(
+          child: Column(
+            children: [
+              _buildHeader(),
+              _buildStatusBar(),
+              Expanded(child: _buildMessageList()),
+              if (_isListening) _buildSttIndicator(),
+              _buildInputBar(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── Header ─────────────────────────────────────────────────────────────────
+  Widget _buildHeader() {
+    return AnimatedBuilder(
+      animation: _flickerCtrl,
+      builder: (_, __) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(color: AppTheme.neonGreen.withOpacity(0.3), width: 1),
+          ),
+        ),
+        child: Row(
+          children: [
+            // Logo / title
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'CIPHER.AI',
+                  style: AppTheme.displayFont.copyWith(
+                    shadows: [
+                      Shadow(
+                        color: AppTheme.neonGreen.withOpacity(
+                            _flickerCtrl.value > 0.9 ? 0.3 : 1.0),
+                        blurRadius: 12,
+                      ),
+                    ],
+                  ),
+                ),
+                Text('[ KAVIYA\'S TERMINAL ]', style: AppTheme.terminalTiny),
+              ],
+            ),
+            const Spacer(),
+            // TTS toggle
+            _HeaderButton(
+              icon: _ttsEnabled ? Icons.volume_up : Icons.volume_off,
+              active: _ttsEnabled,
+              onTap: _toggleTts,
+              tooltip: 'Toggle TTS',
+            ),
+            const SizedBox(width: 10),
+            // Speaking indicator
+            if (_isSpeaking)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  border: Border.all(color: AppTheme.neonCyan.withOpacity(0.5)),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+                child: Text('◈ TTS', style: AppTheme.terminalTiny.copyWith(color: AppTheme.neonCyan)),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Status bar ─────────────────────────────────────────────────────────────
+  Widget _buildStatusBar() {
+    final provider = widget.aiService.provider == AIProvider.gemini
+        ? 'GEMINI'
+        : 'OPENAI';
+    return Container(
+      color: AppTheme.neonGreenFade,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      child: Row(
+        children: [
+          _StatusDot(active: true),
+          const SizedBox(width: 6),
+          Text('$provider // CONNECTED', style: AppTheme.terminalTiny),
+          const Spacer(),
+          Text(
+            _isProcessing ? 'PROCESSING...' : 'READY',
+            style: AppTheme.terminalTiny.copyWith(
+              color: _isProcessing ? AppTheme.neonCyan : AppTheme.neonGreenDim,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Message list ──────────────────────────────────────────────────────────
+  Widget _buildMessageList() {
+    if (!_bootDone) return _buildBootAnimation();
+    return ListView.builder(
+      controller: _scrollCtrl,
+      padding: const EdgeInsets.only(top: 8, bottom: 8),
+      itemCount: _messages.length,
+      itemBuilder: (_, i) {
+        final msg = _messages[i];
+        return ChatBubble(
+          message:          msg,
+          animate:          msg.id == _animatingId,
+          onTypingComplete: () {
+            if (msg.id == _animatingId) {
+              setState(() => _animatingId = null);
+            }
+          },
+        );
+      },
+    );
+  }
+
+  // ── Boot animation ────────────────────────────────────────────────────────
+  Widget _buildBootAnimation() {
+    return AnimatedBuilder(
+      animation: _bootCtrl,
+      builder: (_, __) {
+        final lines = [
+          'INITIALIZING CIPHER.AI...',
+          'LOADING SINHALA LANGUAGE MODULE...',
+          'ESTABLISHING SECURE TUNNEL...',
+          'PERSONA: KAVIYA MODE ACTIVE',
+          'SYSTEM READY ✓',
+        ];
+        final visible = (lines.length * _bootCtrl.value).ceil();
+        return Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: lines.take(visible).map((l) => Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text('> $l', style: AppTheme.terminalSmall),
+            )).toList(),
+          ),
+        );
+      },
+    );
+  }
+
+  // ── STT partial indicator ─────────────────────────────────────────────────
+  Widget _buildSttIndicator() {
+    return AnimatedBuilder(
+      animation: _micPulseCtrl,
+      builder: (_, __) => Container(
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: AppTheme.neonGreen.withOpacity(0.04),
+          border: Border.all(
+            color: AppTheme.neonGreen.withOpacity(
+              0.3 + _micPulseCtrl.value * 0.5,
+            ),
+          ),
+          borderRadius: BorderRadius.circular(2),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              Icons.mic,
+              color: AppTheme.neonGreen.withOpacity(
+                0.5 + _micPulseCtrl.value * 0.5,
+              ),
+              size: 16,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                _sttPartial.isEmpty ? 'listening...' : _sttPartial,
+                style: AppTheme.terminalSmall.copyWith(
+                  color: _sttPartial.isEmpty
+                      ? AppTheme.textDim
+                      : AppTheme.neonCyan,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Input bar ─────────────────────────────────────────────────────────────
+  Widget _buildInputBar() {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: AppTheme.bgSecondary,
+        border: Border(
+          top: BorderSide(color: AppTheme.neonGreen.withOpacity(0.2)),
+        ),
+      ),
+      child: Row(
+        children: [
+          // Text field
+          Expanded(
+            child: TextField(
+              controller:  _textCtrl,
+              style:       AppTheme.terminalMedium,
+              enabled:     !_isListening,
+              maxLines:    null,
+              textInputAction: TextInputAction.send,
+              onSubmitted:     _sendMessage,
+              decoration: InputDecoration(
+                hintText:    '> type command...',
+                prefixText:  '$ ',
+                prefixStyle: AppTheme.terminalMedium.copyWith(
+                  color: AppTheme.neonGreenDim,
+                ),
+                isDense:     true,
+                contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12, vertical: 10),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+
+          // Mic button
+          _buildMicButton(),
+
+          const SizedBox(width: 8),
+
+          // Send button
+          _TerminalButton(
+            icon: Icons.send,
+            onTap: () => _sendMessage(_textCtrl.text),
+            active: !_isProcessing,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMicButton() {
+    return AnimatedBuilder(
+      animation: _micPulseCtrl,
+      builder: (_, __) => GestureDetector(
+        onTap: _toggleListening,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            color: _isListening
+                ? AppTheme.neonGreen.withOpacity(
+                    0.1 + _micPulseCtrl.value * 0.15)
+                : Colors.transparent,
+            border: Border.all(
+              color: _isListening
+                  ? AppTheme.neonGreen.withOpacity(
+                      0.5 + _micPulseCtrl.value * 0.5)
+                  : AppTheme.neonGreenDim.withOpacity(0.4),
+              width: _isListening ? 1.5 : 1,
+            ),
+            borderRadius: BorderRadius.circular(2),
+          ),
+          child: Icon(
+            _isListening ? Icons.mic : Icons.mic_none,
+            color: _isListening ? AppTheme.neonGreen : AppTheme.textDim,
+            size: 20,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Small reusable widgets ────────────────────────────────────────────────────
+class _HeaderButton extends StatelessWidget {
+  final IconData icon;
+  final bool active;
+  final VoidCallback onTap;
+  final String tooltip;
+
+  const _HeaderButton({
+    required this.icon,
+    required this.active,
+    required this.onTap,
+    required this.tooltip,
+  });
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+        message: tooltip,
+        child: GestureDetector(
+          onTap: onTap,
+          child: Icon(
+            icon,
+            color: active ? AppTheme.neonGreen : AppTheme.textDim,
+            size: 22,
+          ),
+        ),
+      );
+}
+
+class _TerminalButton extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onTap;
+  final bool active;
+
+  const _TerminalButton({
+    required this.icon,
+    required this.onTap,
+    this.active = true,
+  });
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+        onTap: active ? onTap : null,
+        child: Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            color: active ? AppTheme.neonGreenFade : Colors.transparent,
+            border: Border.all(
+              color: active
+                  ? AppTheme.neonGreen.withOpacity(0.5)
+                  : AppTheme.textDim.withOpacity(0.3),
+            ),
+            borderRadius: BorderRadius.circular(2),
+          ),
+          child: Icon(
+            icon,
+            color: active ? AppTheme.neonGreen : AppTheme.textDim,
+            size: 18,
+          ),
+        ),
+      );
+}
+
+class _StatusDot extends StatefulWidget {
+  final bool active;
+  const _StatusDot({required this.active});
+  @override
+  State<_StatusDot> createState() => _StatusDotState();
+}
+
+class _StatusDotState extends State<_StatusDot>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+        animation: _ctrl,
+        builder: (_, __) => Container(
+          width: 7,
+          height: 7,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: widget.active
+                ? AppTheme.neonGreen.withOpacity(0.5 + _ctrl.value * 0.5)
+                : AppTheme.textDim,
+          ),
+        ),
+      );
+}
