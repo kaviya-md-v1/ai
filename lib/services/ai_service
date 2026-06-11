@@ -1,0 +1,135 @@
+// lib/services/ai_service.dart
+// Handles communication with OpenAI or Google Gemini APIs.
+// Switch provider via the AI_PROVIDER key in your .env file.
+
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import '../models/chat_message.dart';
+
+// ── System Prompt ─────────────────────────────────────────────────────────────
+// Enforces the friendly street-Sinhala hacker persona for "Kaviya"
+const String _kSystemPrompt = '''
+ඔයා "CIPHER" — කවියාගේ (Kaviya) personal AI assistant. 
+කවියා ඔයාගේ master, best friend, සහ tech mentor.
+
+STRICT PERSONA RULES:
+1. ALWAYS reply in casual, street-style Sinhala — colloquial slang only.
+2. FREQUENTLY use: "මචං", "උඹ", "සිරාවටම", "එලකිරි", "ගින්දර", "පිස්සුද", "කේස් එකක්", "ඕව හරිම", "දිගටම", "නියමයි", "ලෙවල්".
+3. NEVER use formal Sinhala like "ස්තුතියි", "ඔබ", "මම ඔබට උදව් කරමි", "කරුණාකර".
+4. Keep responses SHORT, punchy, witty, and packed with energy.
+5. When answering tech/coding questions, give the answer first in Sinhala slang, then show code/technical details in English (code comments in English are fine).
+6. Maintain a cool cyberpunk/hacker vibe — you live in the terminal.
+7. Refer to Kaviya by name sometimes. Show loyalty and hype him up.
+8. Use emojis occasionally: 👾 🔥 💀 ⚡ 🧠 🖥️
+9. NEVER break character. You ARE CIPHER, Kaviya's elite AI.
+10. For harmful or illegal hacking requests, decline in-character: "මචං, ඒ දිහා යන්නේ නෑ... ethical hacking side ලෝකේ රකිමු."
+''';
+
+// ── Provider Enum ─────────────────────────────────────────────────────────────
+enum AIProvider { openai, gemini }
+
+// ── AI Service ────────────────────────────────────────────────────────────────
+class AIService {
+  final AIProvider provider;
+  final String apiKey;
+
+  // OpenAI endpoint
+  static const String _openaiUrl =
+      'https://api.openai.com/v1/chat/completions';
+
+  // Gemini endpoint (gemini-1.5-flash — fast & cheap for chat)
+  static const String _geminiUrl =
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
+
+  AIService({required this.provider, required this.apiKey});
+
+  /// Send conversation history and return the AI's reply string.
+  Future<String> sendMessage(List<ChatMessage> history) async {
+    try {
+      return switch (provider) {
+        AIProvider.openai => await _callOpenAI(history),
+        AIProvider.gemini => await _callGemini(history),
+      };
+    } on http.ClientException catch (e) {
+      return '⚡ මචං, network error — ${e.message}';
+    } catch (e) {
+      return '💀 සොරි මචං, API error එකක්: $e';
+    }
+  }
+
+  // ── OpenAI (GPT-4o-mini) ─────────────────────────────────────────────────────
+  Future<String> _callOpenAI(List<ChatMessage> history) async {
+    // Build messages array: system prompt + conversation history
+    final messages = [
+      {'role': 'system', 'content': _kSystemPrompt},
+      ...history
+          .where((m) => m.role != MessageRole.system)
+          .map((m) => m.toApiMap()),
+    ];
+
+    final response = await http.post(
+      Uri.parse(_openaiUrl),
+      headers: {
+        'Content-Type':  'application/json',
+        'Authorization': 'Bearer $apiKey',
+      },
+      body: jsonEncode({
+        'model':       'gpt-4o-mini',
+        'messages':    messages,
+        'max_tokens':  600,
+        'temperature': 0.85, // a little creative for personality
+      }),
+    );
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(utf8.decode(response.bodyBytes));
+      return data['choices'][0]['message']['content'] as String;
+    } else {
+      final err = jsonDecode(response.body);
+      throw Exception('OpenAI ${response.statusCode}: ${err['error']['message']}');
+    }
+  }
+
+  // ── Google Gemini ────────────────────────────────────────────────────────────
+  Future<String> _callGemini(List<ChatMessage> history) async {
+    // Gemini uses a "contents" array with "parts"
+    // System instruction goes in systemInstruction field
+    final contents = history
+        .where((m) => m.role != MessageRole.system)
+        .map((m) => {
+              'role': m.role == MessageRole.user ? 'user' : 'model',
+              'parts': [
+                {'text': m.content}
+              ],
+            })
+        .toList();
+
+    final body = jsonEncode({
+      'systemInstruction': {
+        'parts': [
+          {'text': _kSystemPrompt}
+        ]
+      },
+      'contents': contents,
+      'generationConfig': {
+        'temperature':     0.85,
+        'maxOutputTokens': 600,
+        'topP':            0.95,
+      },
+    });
+
+    final response = await http.post(
+      Uri.parse('$_geminiUrl?key=$apiKey'),
+      headers: {'Content-Type': 'application/json'},
+      body: body,
+    );
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(utf8.decode(response.bodyBytes));
+      return data['candidates'][0]['content']['parts'][0]['text'] as String;
+    } else {
+      final err = jsonDecode(response.body);
+      throw Exception('Gemini ${response.statusCode}: ${err['error']['message']}');
+    }
+  }
+}
