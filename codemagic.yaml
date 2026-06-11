@@ -4,14 +4,11 @@ workflows:
     environment:
       flutter: stable
     scripts:
-      - name: Create android folder
-        script: |
-          flutter create . --platforms android
-          echo "Android folder created"
-          ls -la android/
-      - name: Get dependencies
+      - name: Step 1 - Create android folder FIRST
+        script: flutter create . --platforms android
+      - name: Step 2 - Get dependencies AFTER
         script: flutter pub get
-      - name: Build APK
+      - name: Step 3 - Build APK
         script: flutter build apk --release
     artifacts:
       - build/app/outputs/flutter-apk/app-release.apk
