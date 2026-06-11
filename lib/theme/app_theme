@@ -1,0 +1,89 @@
+// lib/theme/app_theme.dart
+// Matrix/Cyberpunk theme constants for Kaviya AI
+
+import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
+
+class AppTheme {
+  // ── Colour Palette ──────────────────────────────────────────────────────────
+  static const Color bgPrimary     = Color(0xFF000000); // pure black
+  static const Color bgSecondary   = Color(0xFF0A0F0A); // deep terminal green-black
+  static const Color bgCard        = Color(0xFF050F05); // chat bubble bg
+  static const Color neonGreen     = Color(0xFF00FF41); // matrix neon green
+  static const Color neonGreenDim  = Color(0xFF00C030); // dimmed green
+  static const Color neonGreenFade = Color(0x3300FF41); // transparent green
+  static const Color neonCyan      = Color(0xFF00FFFF); // accent cyan
+  static const Color neonRed       = Color(0xFFFF0040); // error / warning
+  static const Color textPrimary   = Color(0xFF00FF41);
+  static const Color textSecondary = Color(0xFF00C030);
+  static const Color textDim       = Color(0xFF336633);
+  static const Color borderColor   = Color(0xFF00FF4130);
+  static const Color scanlineColor = Color(0x0500FF41);
+
+  // ── Typography ───────────────────────────────────────────────────────────────
+  static TextStyle get terminalLarge => GoogleFonts.shareTechMono(
+    fontSize: 22,
+    color: neonGreen,
+    letterSpacing: 1.5,
+  );
+
+  static TextStyle get terminalMedium => GoogleFonts.shareTechMono(
+    fontSize: 15,
+    color: neonGreen,
+    height: 1.6,
+    letterSpacing: 0.5,
+  );
+
+  static TextStyle get terminalSmall => GoogleFonts.shareTechMono(
+    fontSize: 12,
+    color: textSecondary,
+    letterSpacing: 0.3,
+  );
+
+  static TextStyle get terminalTiny => GoogleFonts.shareTechMono(
+    fontSize: 10,
+    color: textDim,
+    letterSpacing: 1.0,
+  );
+
+  static TextStyle get displayFont => GoogleFonts.vt323(
+    fontSize: 32,
+    color: neonGreen,
+    letterSpacing: 3,
+  );
+
+  static TextStyle get userBubbleText => GoogleFonts.shareTechMono(
+    fontSize: 14,
+    color: neonCyan,
+    height: 1.5,
+  );
+
+  // ── ThemeData ────────────────────────────────────────────────────────────────
+  static ThemeData get theme => ThemeData(
+    brightness: Brightness.dark,
+    scaffoldBackgroundColor: bgPrimary,
+    primaryColor: neonGreen,
+    colorScheme: const ColorScheme.dark(
+      primary:   neonGreen,
+      secondary: neonCyan,
+      surface:   bgSecondary,
+      error:     neonRed,
+    ),
+    textTheme: GoogleFonts.shareTechMonoTextTheme(
+      ThemeData.dark().textTheme,
+    ).apply(bodyColor: textPrimary, displayColor: textPrimary),
+    inputDecorationTheme: InputDecorationTheme(
+      filled: true,
+      fillColor: bgCard,
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(4),
+        borderSide: const BorderSide(color: neonGreenDim, width: 1),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(4),
+        borderSide: const BorderSide(color: neonGreen, width: 1.5),
+      ),
+      hintStyle: GoogleFonts.shareTechMono(color: textDim, fontSize: 13),
+    ),
+  );
+}
