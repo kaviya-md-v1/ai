@@ -1,0 +1,51 @@
+name: kaviya_ai
+description: Kaviya - Hacker AI Assistant with Matrix/Cyberpunk theme
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # AI API
+  http: ^1.2.1
+
+  # Speech-to-Text
+  speech_to_text: ^6.6.2
+
+  # Text-to-Speech
+  flutter_tts: ^4.0.2
+
+  # Google Fonts (VT323 + Share Tech Mono)
+  google_fonts: ^6.2.1
+
+  # Shared Preferences (for API key storage)
+  shared_preferences: ^2.2.3
+
+  # Permission Handler
+  permission_handler: ^11.3.1
+
+  # Animated text for terminal effect
+  animated_text_kit: ^4.2.2
+
+  # Dotenv for API key config
+  flutter_dotenv: ^5.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - .env
+
+  fonts:
+    - family: VT323
+      fonts:
+        - asset: assets/fonts/VT323-Regular.ttf
